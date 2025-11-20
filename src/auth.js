@@ -3,44 +3,67 @@ const fs = require("fs");
 const chalk = require("chalk");
 const { proxyConfig, siteKeys } = require("./config");
 const { solveRecaptchaV2 } = require("./solver");
+const { loadSettings } = require("./settings");
 
-// Pastikan folder session ada
+// Pastikan folder session & screenshots ada
 if (!fs.existsSync("./session")) {
   fs.mkdirSync("./session");
 }
+if (!fs.existsSync("./screenshots")) {
+  fs.mkdirSync("./screenshots");
+}
 
-async function loginSingleAccount(account) {
+// PERBAIKAN 1: Tambah parameter isRefresh (default false)
+async function loginSingleAccount(account, isRefresh = false) {
   const sessionFile = `./session/${account.email}.json`;
+  const settings = loadSettings(); // Load setting terbaru
 
-  // Cek kalau sesi masih valid, skip login (Opsional, kita force login dulu biar aman)
-  // if (fs.existsSync(sessionFile)) { ... }
-
-  console.log(chalk.cyan(`[${account.email}] Membuka Browser...`));
+  // PERBAIKAN 2: Log hanya muncul jika BUKAN refresh otomatis (biar gak spam log)
+  if (!isRefresh) {
+    console.log(chalk.cyan(`[${account.email}] Inisialisasi Browser...`));
+    const proxyStatus = settings.useProxy
+      ? chalk.green("ON")
+      : chalk.red("OFF");
+    console.log(
+      chalk.dim(
+        `   Mode: Headless [${settings.headless}] | Proxy [${proxyStatus}]`
+      )
+    );
+  }
 
   const browser = await chromium.launch({
-    headless: true, // Ubah false jika ingin lihat prosesnya
+    headless: settings.headless,
     args: ["--disable-blink-features=AutomationControlled"],
   });
 
-  // INI YANG TADI HILANG (Definisi Context)
-  const context = await browser.newContext({
-    proxy: proxyConfig, // Pakai proxy dari config
+  // LOGIC PROXY: Hanya pasang proxy jika setting aktif
+  const contextOptions = {
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  });
+    viewport: { width: 1280, height: 720 },
+  };
 
-  const page = await context.newPage();
+  if (settings.useProxy) {
+    contextOptions.proxy = proxyConfig;
+  }
+
+  const context = await browser.newContext(contextOptions);
+  let page = null; // Deklarasi di luar try agar bisa diakses catch
 
   try {
-    console.log(chalk.cyan(`[${account.email}] Mengakses Halaman Login...`));
+    page = await context.newPage();
+
+    if (!isRefresh)
+      console.log(chalk.cyan(`[${account.email}] Mengakses Halaman Login...`));
 
     // 1. Buka Halaman
     await page.goto("https://antrean.logammulia.com/login", { timeout: 60000 });
 
     // 2. Isi Form
-    console.log(
-      chalk.cyan(`[${account.email}] Mengisi Username & Password...`)
-    );
+    if (!isRefresh)
+      console.log(
+        chalk.cyan(`[${account.email}] Mengisi Username & Password...`)
+      );
     await page.fill("#username", account.email);
     await page.fill("#password", account.password);
 
@@ -50,7 +73,8 @@ async function loginSingleAccount(account) {
     }
 
     // 3. Handle Captcha
-    console.log(chalk.yellow(`[${account.email}] Solving Captcha...`));
+    if (!isRefresh)
+      console.log(chalk.yellow(`[${account.email}] Solving Captcha...`));
     const token = await solveRecaptchaV2(page.url(), siteKeys.login);
 
     // Inject Token
@@ -59,41 +83,67 @@ async function loginSingleAccount(account) {
     }, token);
 
     // 4. Klik Login
-    console.log(chalk.blue(`[${account.email}] Klik Login...`));
-    // Trik: Tunggu navigasi berbarengan dengan klik
+    if (!isRefresh) console.log(chalk.blue(`[${account.email}] Klik Login...`));
+
     await Promise.all([
-      page.waitForNavigation({ timeout: 60000 }).catch(() => {}), // catch biar gak error kalau timeout
+      page.waitForNavigation({ timeout: 60000 }).catch(() => {}),
       page.click('button[type="submit"]'),
     ]);
 
     // 5. Validasi Login
-    // Cek URL atau elemen dashboard
     if (
       page.url().includes("/users") ||
       (await page.isVisible('a[href*="logout"]'))
     ) {
       const cookies = await context.cookies();
+
+      // PERBAIKAN 3: Hapus file lama (jika ada) agar Timestamp file terupdate
+      // Ini penting agar sessionGuard tau kalau sesinya baru diperbarui
+      if (fs.existsSync(sessionFile)) {
+        try {
+          fs.unlinkSync(sessionFile);
+        } catch (e) {}
+      }
+
       fs.writeFileSync(sessionFile, JSON.stringify(cookies, null, 2));
-      console.log(
-        chalk.green(`[${account.email}] ✅ LOGIN SUKSES! Sesi tersimpan.`)
-      );
+
+      if (!isRefresh)
+        console.log(
+          chalk.green(`[${account.email}] ✅ LOGIN SUKSES! Sesi tersimpan.`)
+        );
     } else {
-      // Cek apakah ada pesan error di layar
+      // Cek Error Alert
       const errorMsg = await page
         .textContent(".alert")
         .catch(() => "Unknown Error");
-      throw new Error(
-        `Login gagal. Masih di halaman login. Pesan: ${errorMsg}`
-      );
+
+      // Cek apakah balik ke login karena captcha salah/expired
+      if (page.url().includes("/login")) {
+        throw new Error(
+          `Login Gagal (Mungkin Captcha/Pass Salah). Pesan: ${errorMsg.trim()}`
+        );
+      }
+
+      throw new Error(`Unknown Login State. URL: ${page.url()}`);
     }
   } catch (error) {
+    // Error log tetap ditampilkan meski mode refresh
     console.log(chalk.red(`[${account.email}] ❌ Gagal: ${error.message}`));
-    // Screenshot error buat debugging
-    await page.screenshot({
-      path: `./screenshots/error_login_${account.email}.png`,
-    });
+
+    // Screenshot hanya jika page berhasil dibuat
+    if (page) {
+      try {
+        await page.screenshot({
+          path: `./screenshots/error_login_${account.email}.png`,
+        });
+        if (!isRefresh)
+          console.log(chalk.dim(`   📸 Screenshot error tersimpan.`));
+      } catch (e) {
+        // Ignore error screenshot
+      }
+    }
   } finally {
-    await browser.close();
+    if (browser) await browser.close();
   }
 }
 
@@ -105,4 +155,4 @@ async function loginAllAccounts(accounts) {
   console.log(chalk.blue("════ SELESAI ════"));
 }
 
-module.exports = { loginAllAccounts };
+module.exports = { loginAllAccounts, loginSingleAccount }; // Export loginSingleAccount juga

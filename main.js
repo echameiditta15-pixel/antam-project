@@ -9,18 +9,33 @@ const {
 const { executeWarSingle } = require("./src/warExecutor");
 const { loginAllAccounts } = require("./src/auth");
 const { checkQuotaAll } = require("./src/war");
+const { manageSettings, loadSettings } = require("./src/settings");
+const { testProxy } = require("./src/proxyTester");
 
 async function main() {
   console.clear();
 
+  // Load config terbaru setiap kali menu di-refresh
+  const config = loadSettings();
+
+  // Format status untuk Header
+  const headlessStatus = config.headless ? chalk.green("ON") : chalk.red("OFF");
+  const proxyStatus = config.useProxy
+    ? chalk.green("AKTIF")
+    : chalk.red("MATI");
+
   // 1. Tampilkan Header
   drawHeader("BOT ANTAM - PLAYWRIGHT FULL AUTO");
-  console.log(chalk.dim("Headless Mode: ON (tanpa jendela)\n"));
+  console.log(
+    chalk.dim(
+      `Info: Headless [${headlessStatus}] | Proxy [${proxyStatus}] | Interval [${config.checkInterval}s]\n`
+    )
+  );
 
-  // 2. Render Menu Manual (Supaya tidak pakai panah)
+  // 2. Render Menu Manual
   console.log(chalk.white("1. Login Semua Akun"));
   console.log(chalk.white("2. Cek Kuota & Restok"));
-  console.log(chalk.gray("3. Perang Restok (Coming Soon)"));
+  console.log(chalk.white("3. Test Perang Restok (Manual Trigger)")); // Sudah aktif
   console.log(chalk.white("4. Tambah Akun"));
   console.log(chalk.white("5. Cek & Hapus Akun"));
   console.log(chalk.white("6. Monitor Otomatis"));
@@ -40,7 +55,7 @@ async function main() {
     },
   ]);
 
-  // 4. Switch Case berdasarkan input string
+  // 4. Switch Case
   switch (answer.menu.trim()) {
     case "1":
       const accountsLogin = loadAccounts();
@@ -103,8 +118,6 @@ async function main() {
       ]);
 
       if (confirm) {
-        // Panggil fungsi War Single
-        // Parameter kedua adalah ID Cabang dari akun tersebut
         await executeWarSingle(targetAccount, targetAccount.branch);
       } else {
         console.log("Dibatalkan.");
@@ -115,31 +128,32 @@ async function main() {
 
     case "4":
       await addAccount();
-      // Tidak perlu pause karena di dalam addAccount alurnya sudah clear
-      // main() dipanggil lagi di bawah switch
+      // Tidak perlu pause agar langsung refresh list akun kalau mau lihat
       break;
 
     case "5":
       console.clear();
       drawHeader("DAFTAR AKUN");
       listAccounts();
-      // Disini bisa tambah logic hapus (input nomor urut)
       await pause();
       break;
 
     case "6":
       console.log(
-        chalk.yellow("Fitur Monitor akan menggunakan interval looping.")
+        chalk.yellow(
+          "Fitur Monitor akan menggunakan interval looping (Next Step)."
+        )
       );
       await pause();
       break;
 
-    case "7":
-      console.log(
-        chalk.cyan(
-          "Edit file .env atau database/settings.json secara manual untuk saat ini."
-        )
-      );
+    case "7": // PENGATURAN
+      await manageSettings();
+      break;
+
+    case "t": // TEST PROXY
+    case "T":
+      await testProxy();
       await pause();
       break;
 
