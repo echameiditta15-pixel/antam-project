@@ -6,19 +6,20 @@ const {
   listAccounts,
   loadAccounts,
 } = require("./src/accountManager");
-const { executeWarSingle } = require("./src/warExecutor");
 const { loginAllAccounts } = require("./src/auth");
 const { checkQuotaAll } = require("./src/war");
 const { manageSettings, loadSettings } = require("./src/settings");
 const { testProxy } = require("./src/proxyTester");
 const { startAutoMonitor } = require("./src/autoMonitor");
 const { startSniperMode } = require("./src/sniper");
-const { startSniperAPI } = require("./src/sniperAPI"); // Pastikan file ini ada
+const { startSniperAPI } = require("./src/sniperAPI");
 const { scrapeWakdaIDs } = require("./src/wakdaScraper");
+const { startMultiSniper } = require("./src/multiSniper"); // Pastikan file ini ada
+
 async function main() {
   console.clear();
 
-  // Load config terbaru setiap kali menu di-refresh
+  // Load config terbaru
   const config = loadSettings();
 
   // Format status untuk Header
@@ -38,7 +39,7 @@ async function main() {
   // 2. Render Menu Manual
   console.log(chalk.white("1. Login Semua Akun"));
   console.log(chalk.white("2. Cek Kuota & Restok"));
-  console.log(chalk.white("3. SNIPER MODE (Auto-Wait & Fire)"));
+  console.log(chalk.white("3. SNIPER MODE (Single & Multi)"));
   console.log(chalk.white("4. Tambah Akun"));
   console.log(chalk.white("5. Cek & Hapus Akun"));
   console.log(chalk.white("6. Monitor Otomatis"));
@@ -72,12 +73,12 @@ async function main() {
       break;
 
     case "2":
-      await checkQuotaAll(); // Tidak perlu parameter, dia load sendiri
+      await checkQuotaAll();
       await pause();
       break;
 
     case "3":
-      // --- LOGIC SNIPER MODE ---
+      // --- LOGIC WAR MODE ---
       const accountsWar = loadAccounts();
       if (accountsWar.length === 0) {
         console.log(chalk.red("⚠️  Belum ada akun! Tambah dulu."));
@@ -85,54 +86,99 @@ async function main() {
         break;
       }
 
-      // 1. Pilih Akun
-      const { selectedAccountIndex } = await inquirer.prompt([
+      // 1. Pilih Strategi (Single vs Multi)
+      const { strategy } = await inquirer.prompt([
         {
           type: "list",
-          name: "selectedAccountIndex",
-          message: "Pilih Akun Sniper:",
-          choices: accountsWar.map((acc, idx) => ({
-            name: acc.email,
-            value: idx,
-          })),
-        },
-      ]);
-      const sniperAccount = accountsWar[selectedAccountIndex];
-
-      // 2. Pilih Cabang Target
-      const { branchId } = await inquirer.prompt([
-        {
-          type: "input",
-          name: "branchId",
-          message: "Masukkan ID Cabang Target (contoh: 6 untuk Gd. Antam):",
-          default: sniperAccount.branch || "6", // Default ke cabang akun atau 6
-        },
-      ]);
-
-      // 3. Pilih Metode (Browser vs API)
-      const { mode } = await inquirer.prompt([
-        {
-          type: "list",
-          name: "mode",
-          message: "Pilih Metode Perang:",
+          name: "strategy",
+          message: "Pilih Strategi Perang:",
           choices: [
             {
-              name: "Browser Sniper (Visual, Lebih Aman, Refresh)",
-              value: "browser",
+              name: "🔫 Single Sniper (1 Akun - Presisi Tinggi)",
+              value: "single",
             },
             {
-              name: "API Hybrid (Experimental, Super Cepat, Blind Fire)",
-              value: "api",
+              name: "💣 Multi-Account Cluster (Serangan Massal)",
+              value: "multi",
             },
           ],
         },
       ]);
 
-      // 4. Eksekusi
-      if (mode === "browser") {
-        await startSniperMode(sniperAccount, branchId);
+      if (strategy === "single") {
+        // --- SINGLE SNIPER ---
+        const { selectedAccountIndex } = await inquirer.prompt([
+          {
+            type: "list",
+            name: "selectedAccountIndex",
+            message: "Pilih Akun Sniper:",
+            choices: accountsWar.map((acc, idx) => ({
+              name: acc.email,
+              value: idx,
+            })),
+          },
+        ]);
+        const sniperAccount = accountsWar[selectedAccountIndex];
+
+        const { branchId } = await inquirer.prompt([
+          {
+            type: "input",
+            name: "branchId",
+            message: "Masukkan ID Cabang Target:",
+            default: sniperAccount.branch || "6",
+          },
+        ]);
+
+        const { mode } = await inquirer.prompt([
+          {
+            type: "list",
+            name: "mode",
+            message: "Pilih Metode Teknis:",
+            choices: [
+              {
+                name: "Browser Sniper (Visual, Lebih Aman)",
+                value: "browser",
+              },
+              {
+                name: "API Hybrid (Experimental, Super Cepat)",
+                value: "api",
+              },
+            ],
+          },
+        ]);
+
+        if (mode === "browser") {
+          await startSniperMode(sniperAccount, branchId);
+        } else {
+          await startSniperAPI(sniperAccount, branchId);
+        }
       } else {
-        await startSniperAPI(sniperAccount, branchId);
+        // --- MULTI ACCOUNT ---
+        const { selectedIndices } = await inquirer.prompt([
+          {
+            type: "checkbox",
+            name: "selectedIndices",
+            message: "Pilih Pasukan (Spasi untuk pilih):",
+            choices: accountsWar.map((acc, idx) => ({
+              name: `${acc.email} (${acc.branch})`,
+              value: idx,
+            })),
+            validate: (a) => (a.length < 1 ? "Pilih minimal 1 akun" : true),
+          },
+        ]);
+
+        const selectedAccounts = selectedIndices.map((idx) => accountsWar[idx]);
+
+        const { branchIdMulti } = await inquirer.prompt([
+          {
+            type: "input",
+            name: "branchIdMulti",
+            message: "Masukkan ID Cabang Target (Serangan Bersama):",
+            default: "6",
+          },
+        ]);
+
+        await startMultiSniper(selectedAccounts, branchIdMulti);
       }
 
       await pause();
@@ -154,7 +200,7 @@ async function main() {
       await pause();
       break;
 
-    case "7": // PENGATURAN
+    case "7":
       await manageSettings();
       break;
 
@@ -163,7 +209,7 @@ async function main() {
       await pause();
       break;
 
-    case "t": // TEST PROXY
+    case "t":
     case "T":
       await testProxy();
       await pause();
@@ -175,12 +221,12 @@ async function main() {
       break;
 
     default:
-      console.log(chalk.red("❌ Menu tidak valid! Masukkan angka 0-7."));
+      console.log(chalk.red("❌ Menu tidak valid! Masukkan angka 0-8."));
       await pause();
       break;
   }
 
-  main(); // Loop kembali ke menu utama
+  main();
 }
 
 async function pause() {
