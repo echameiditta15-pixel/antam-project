@@ -1,20 +1,27 @@
 {
-  "name": "antam-project",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "antam-bot-sniper",
+  "version": "2.0.0",
+  "description": "Bot Automasi Antrean Antam dengan Playwright (Hybrid API & Browser)",
+  "main": "main.js",
   "scripts": {
+    "start": "node main.js",
+    "clean": "rm -rf session/* screenshots/* && echo 'Bersih-bersih selesai!'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "antam",
+    "bot",
+    "playwright",
+    "automation"
+  ],
+  "author": "Noval",
   "license": "ISC",
-  "description": "",
   "dependencies": {
-    "axios": "^1.13.2",
+    "axios": "^1.7.0",
     "chalk": "^4.1.2",
     "cli-table3": "^0.6.5",
-    "dotenv": "^17.2.3",
-    "inquirer": "^8.2.7",
-    "playwright": "^1.56.1"
+    "dotenv": "^16.4.0",
+    "inquirer": "^8.2.6",
+    "playwright": "^1.49.0"
   }
 }
