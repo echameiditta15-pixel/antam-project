@@ -2,6 +2,7 @@ const { chromium } = require("playwright");
 const chalk = require("chalk");
 const Table = require("cli-table3");
 const fs = require("fs");
+// Path Import yang BENAR
 const { proxyConfig, getSiteName } = require("../../config/config");
 const { loadSettings } = require("../data/settings");
 const { loadAccounts } = require("../data/accountManager");
@@ -16,6 +17,7 @@ async function checkQuotaAll() {
     )
   );
 
+  // Cek Akun
   const accounts = loadAccounts();
   if (accounts.length === 0) {
     console.log(chalk.red("❌ Tidak ada akun tersimpan! Tambah akun dulu."));
@@ -31,7 +33,6 @@ async function checkQuotaAll() {
 
   if (!fs.existsSync("./screenshots")) fs.mkdirSync("./screenshots");
 
-  // UPDATE TABEL: Menambahkan kolom Sisa & Sesi
   const table = new Table({
     head: ["NO", "CABANG", "SISA", "SESI WAKTU", "STATUS"],
     colWidths: [5, 25, 10, 30, 20],
@@ -66,7 +67,6 @@ async function checkQuotaAll() {
   const page = await context.newPage();
 
   try {
-    // --- NAVIGASI AWAL ---
     console.log(chalk.cyan("🔄 Pemanasan..."));
     await page.goto("https://antrean.logammulia.com/users", {
       timeout: 30000,
@@ -138,39 +138,20 @@ async function checkQuotaAll() {
           continue;
         }
 
-        // --- SCRAPING DETAIL (SISA, SESI, STOK) ---
+        // --- SCRAPING DETAIL ---
         const data = await page.evaluate(() => {
           const bodyText = document.body.innerText;
 
           // 1. Cari Angka Sisa
-          // Format di web: "Sisa : 35" atau "Sisa : 0"
           let sisaKuota = "Unknown";
-          // Cari elemen yang mengandung teks 'Sisa :'
-          const allDivs = Array.from(document.querySelectorAll("div"));
-          const sisaDiv = allDivs.find(
-            (el) => el.innerText.includes("Sisa :") && el.innerText.length < 50
-          );
-
-          if (sisaDiv) {
-            // Ambil angkanya saja
-            const match = sisaDiv.innerText.match(/Sisa\s*:\s*(\d+)/);
-            if (match) sisaKuota = match[1];
-          } else {
-            // Cek indikator merah
-            if (bodyText.includes("Kuota Tidak Tersedia")) sisaKuota = "0";
-          }
+          const sisaMatch = bodyText.match(/Sisa\s*:\s*(\d+)/);
+          if (sisaMatch) sisaKuota = sisaMatch[1];
+          else if (bodyText.includes("Kuota Tidak Tersedia")) sisaKuota = "0";
 
           // 2. Cari Sesi Waktu
-          // Format: "Sesi waktu ambil antrean : Pukul 12:00 - 12:30 WIB"
           let sesiWaktu = "-";
-          const sesiDiv = allDivs.find((el) =>
-            el.innerText.includes("Sesi waktu ambil antrean")
-          );
-          if (sesiDiv) {
-            const text = sesiDiv.innerText;
-            const match = text.match(/Pukul\s+([\d:]+\s*-\s*[\d:]+)/);
-            if (match) sesiWaktu = match[1]; // "12:00 - 12:30"
-          }
+          const sesiMatch = bodyText.match(/Pukul\s+([\d:]+\s*-\s*[\d:]+)/);
+          if (sesiMatch) sesiWaktu = sesiMatch[1];
 
           // 3. Cek Dropdown
           const select = document.querySelector("select#wakda");
@@ -180,7 +161,7 @@ async function checkQuotaAll() {
               (o) => !o.disabled && o.value !== ""
             );
 
-          // 4. Cek Status Tutup/Penuh Text
+          // 4. Cek Status
           let globalStatus = "OPEN";
           if (bodyText.includes("TUTUP otomatis") && !hasDropdown)
             globalStatus = "CLOSED";
@@ -194,13 +175,9 @@ async function checkQuotaAll() {
           };
         });
 
-        // --- LOGIC PENENTUAN STATUS FINAL ---
+        // --- LOGIC STATUS ---
         let statusDisplay = "";
         let sisaDisplay = data.sisa;
-
-        // Logika Prioritas:
-        // 1. Kalau Sisa = 0, maka PASTI HABIS (Meskipun dropdown nyangkut)
-        // 2. Kalau Sisa > 0 dan Dropdown Ada, maka ADA KUOTA
 
         if (data.sisa === "0" || data.globalStatus === "FULL") {
           statusDisplay = chalk.red("❌ HABIS");
@@ -209,7 +186,6 @@ async function checkQuotaAll() {
           statusDisplay = chalk.red("⛔ TUTUP");
           sisaDisplay = "-";
         } else if (parseInt(data.sisa) > 0 || data.hasDropdown) {
-          // Ada kuota!
           statusDisplay = chalk.greenBright("✅ ADA KUOTA");
           sisaDisplay = chalk.greenBright(data.sisa);
         } else {
@@ -223,7 +199,7 @@ async function checkQuotaAll() {
         table.push([no++, siteName, "?", "?", chalk.red("TIMEOUT")]);
       }
 
-      // Delay
+      // Delay Random
       const pauseTime = Math.floor(Math.random() * 1000) + 1000;
       if (no % 5 === 0) {
         process.stdout.write(chalk.cyan("   (Jeda 5s...)\n"));

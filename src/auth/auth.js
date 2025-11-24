@@ -1,4 +1,8 @@
-const { chromium } = require("playwright");
+// --- UPGRADE: PAKE PLAYWRIGHT-EXTRA ---
+const { chromium } = require("playwright-extra");
+const stealth = require("puppeteer-extra-plugin-stealth")();
+chromium.use(stealth);
+
 const fs = require("fs");
 const chalk = require("chalk");
 const { proxyConfig, siteKeys } = require("../../config/config");
@@ -13,7 +17,9 @@ async function loginSingleAccount(account, isRefresh = false) {
   const settings = loadSettings();
 
   if (!isRefresh) {
-    console.log(chalk.cyan(`[${account.email}] Inisialisasi Browser...`));
+    console.log(
+      chalk.cyan(`[${account.email}] Inisialisasi Browser (Stealth)...`)
+    );
     const proxyStatus = settings.useProxy
       ? chalk.green("ON")
       : chalk.red("OFF");
@@ -24,23 +30,14 @@ async function loginSingleAccount(account, isRefresh = false) {
     );
   }
 
-  const stealthArgs = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-features=IsolateOrigins,site-per-process",
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-accelerated-2d-canvas",
-    "--no-first-run",
-    "--no-zygote",
-    "--disable-gpu",
-    "--hide-scrollbars",
-    "--mute-audio",
-  ];
-
   const browser = await chromium.launch({
     headless: settings.headless,
-    args: stealthArgs,
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+    ],
   });
 
   const contextOptions = {
@@ -61,6 +58,7 @@ async function loginSingleAccount(account, isRefresh = false) {
   try {
     page = await context.newPage();
 
+    // Anti-Detection
     await page.addInitScript(() => {
       Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     });
@@ -73,14 +71,33 @@ async function loginSingleAccount(account, isRefresh = false) {
       waitUntil: "domcontentloaded",
     });
 
-    // --- ZONE 1: BYPASS CHECK ---
+    // --- ZONE 1: SMART CLOUDFLARE BYPASS ---
     const title = await page.title();
     const isBlocked =
       title.includes("Just a moment") || title.includes("Bot Verification");
 
     if (isBlocked) {
       if (!isRefresh)
-        console.log(chalk.yellow(`⚠️ Cloudflare Check... Menunggu...`));
+        console.log(chalk.yellow(`⚠️ Terhadang Verifikasi. Mencoba Bypass...`));
+
+      // Cek iframes (ReCaptcha Checkbox)
+      try {
+        const frameElement = await page.waitForSelector(
+          'iframe[src*="recaptcha"]',
+          { timeout: 5000 }
+        );
+        if (frameElement) {
+          if (!isRefresh)
+            console.log(chalk.blue("🤖 Klik checkbox 'I am not a robot'..."));
+          const frame = await frameElement.contentFrame();
+          await frame.click(".recaptcha-checkbox-border");
+          await page.waitForTimeout(2000);
+        }
+      } catch (e) {
+        // Ignore kalau gak ada checkbox (mungkin turnstile putar sendiri)
+      }
+
+      // Tunggu masuk login asli
       try {
         await page.waitForSelector("#username", { timeout: 30000 });
         if (!isRefresh) console.log(chalk.green("✅ Lolos Cloudflare!"));
@@ -122,12 +139,8 @@ async function loginSingleAccount(account, isRefresh = false) {
       page.click('button[type="submit"]'),
     ]);
 
-    // --- [PERBAIKAN LOGIKA VALIDASI & REDIRECT] ---
-
-    // Cek URL saat ini
+    // --- [REDIRECT HANDLER] ---
     const currentUrl = page.url();
-
-    // KASUS: Mental ke /home (Padahal sukses login)
     if (
       currentUrl.includes("/home") ||
       currentUrl === "https://antrean.logammulia.com/"
@@ -136,55 +149,37 @@ async function loginSingleAccount(account, isRefresh = false) {
         console.log(
           chalk.yellow(`   ⚠️ Redirected ke Home. Memaksa masuk Dashboard...`)
         );
-
-      // Paksa masuk ke halaman dashboard
       try {
         await page.goto("https://antrean.logammulia.com/users", {
           waitUntil: "domcontentloaded",
         });
-      } catch (e) {
-        // Ignore timeout, lanjut cek elemen
-      }
+      } catch (e) {}
     }
 
-    // Cek Validitas Akhir: Apakah sudah di Dashboard atau ada tombol logout?
+    // 5. Validasi Akhir
     const isDashboard = page.url().includes("/users");
     const hasLogout = await page.isVisible('a[href*="logout"]');
 
     if (isDashboard || hasLogout) {
-      // LOGIN SUKSES
       const cookies = await context.cookies();
-
-      // Hapus file lama biar bersih
-      if (fs.existsSync(sessionFile)) {
+      if (fs.existsSync(sessionFile))
         try {
           fs.unlinkSync(sessionFile);
         } catch (e) {}
-      }
-
       fs.writeFileSync(sessionFile, JSON.stringify(cookies, null, 2));
 
       if (!isRefresh)
         console.log(chalk.green(`[${account.email}] ✅ LOGIN SUKSES!`));
     } else {
-      // LOGIN GAGAL
-
-      // Cek pesan error spesifik di layar
       const errorAlert = await page
         .locator(".alert")
         .textContent()
         .catch(() => "");
-
-      // Cek apakah mental balik ke login (biasanya karena captcha/pass salah)
       if (page.url().includes("/login")) {
         throw new Error(
-          `Login Ditolak. Pesan: ${
-            errorAlert.trim() || "Mungkin Captcha Expired"
-          }`
+          `Login Ditolak: ${errorAlert.trim() || "Mungkin Captcha Expired"}`
         );
       }
-
-      // Screenshot kondisi aneh (bukan home, bukan users, bukan login)
       await page.screenshot({
         path: `./screenshots/unknown_state_${account.email}.png`,
       });
@@ -192,13 +187,12 @@ async function loginSingleAccount(account, isRefresh = false) {
     }
   } catch (error) {
     console.log(chalk.red(`[${account.email}] ❌ Gagal: ${error.message}`));
-    if (page) {
+    if (page)
       try {
         await page.screenshot({
           path: `./screenshots/error_login_${account.email}.png`,
         });
       } catch (e) {}
-    }
   } finally {
     if (browser) await browser.close();
   }
