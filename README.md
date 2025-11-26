@@ -41,8 +41,8 @@ Proyek ini adalah kerangka kerja otomatisasi web yang dibangun dengan Node.js, P
 
 Sebelum memulai, pastikan Anda telah menginstal:
 
-- [Node.js](https://nodejs.org/) (v14 atau lebih tinggi)
-- npm (biasanya sudah termasuk dengan Node.js)
+- [Node.js](https://nodejs.org/)
+- npm 
 - Git
 
 ## 🚀 Instalasi
