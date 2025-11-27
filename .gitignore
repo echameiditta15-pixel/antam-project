@@ -44,3 +44,4 @@ check_imports.js
 debug_api.js
 
 logs
+*.csv
