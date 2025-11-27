@@ -12,22 +12,9 @@ const { getTimeOffset } = require("../utils/ntp");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DB_WAKDA_PATH = "./database/wakda.json";
 
-// Helper: Simpan Log Data Mentah
-function saveDebugData(label, data, ext = "html") {
-  const logDir = "./logs/debug_dumps";
-  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-
-  const filename = `${label}_${Date.now()}.${ext}`;
-  fs.writeFileSync(path.join(logDir, filename), data);
-  // console.log(chalk.gray(`   💾 Data tersimpan: ${filename}`));
-  return filename;
-}
-
 async function startSniperAPI(account, targetSiteId) {
   console.clear();
-  console.log(
-    chalk.bgRed.white.bold(" 🚀 SNIPER API: BLACK BOX RECORDER MODE ")
-  );
+  console.log(chalk.bgRed.white.bold(" 🚀 SNIPER: TURBO CLICKER MODE "));
   console.log(
     chalk.dim(`Target: ${getSiteName(targetSiteId)} | Akun: ${account.email}`)
   );
@@ -63,11 +50,8 @@ async function startSniperAPI(account, targetSiteId) {
   const page = await context.newPage();
 
   let targetUrl = "";
-  let tokenUrl = "";
-  let csrfToken = "";
   let preSolvedCaptcha = null;
   let isSolving = false;
-  let targetWakdaList = [];
 
   try {
     console.log(chalk.cyan("🔄 Masuk ke Dashboard..."));
@@ -78,73 +62,32 @@ async function startSniperAPI(account, targetSiteId) {
     if (page.url().includes("login"))
       await performEmergencyLogin(page, account);
 
-    console.log(chalk.yellow("🕵️ Scanning Wakda ID..."));
+    console.log(chalk.yellow("🕵️ Masuk Halaman Cabang..."));
     try {
       await page.waitForSelector("select#site", { timeout: 15000 });
       await page.selectOption("select#site", targetSiteId);
       await page.waitForTimeout(500);
-      tokenUrl = await page.inputValue("input#t");
-
+      const tokenUrl = await page.inputValue("input#t");
       targetUrl = `https://antrean.logammulia.com/antrean?site=${targetSiteId}&t=${tokenUrl}`;
       await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
-
-      const scrapedWakdas = await page.evaluate(() => {
-        const select = document.querySelector("select#wakda");
-        if (!select) return [];
-        return Array.from(select.options)
-          .map((o) => o.value)
-          .filter((v) => v !== "");
-      });
-
-      if (scrapedWakdas.length > 0) {
-        targetWakdaList = scrapedWakdas;
-        console.log(
-          chalk.green(`✅ Wakda Live: [${targetWakdaList.join(", ")}]`)
-        );
-        // Update DB
-        try {
-          let dbData = {};
-          if (fs.existsSync(DB_WAKDA_PATH))
-            dbData = JSON.parse(fs.readFileSync(DB_WAKDA_PATH, "utf-8"));
-          dbData[targetSiteId] = scrapedWakdas;
-          fs.writeFileSync(DB_WAKDA_PATH, JSON.stringify(dbData, null, 2));
-        } catch (e) {}
-      } else {
-        console.log(chalk.yellow("⚠️ Wakda kosong. Menggunakan Default 1-50."));
-        targetWakdaList = Array.from({ length: 50 }, (_, i) => String(i + 1));
-      }
     } catch (e) {
       console.log(chalk.red("❌ Gagal Infiltrasi."));
       await browser.close();
       return;
     }
 
-    if (!tokenUrl) throw new Error("Token URL kosong.");
-
-    csrfToken = await getCsrfToken(page, context);
-    console.log(chalk.green(`✅ CSRF: ${csrfToken.substring(0, 10)}...`));
-
     // --- PARSING WAKTU ---
     const bodyText = await page.innerText("body");
     const timeMatch = bodyText.match(/Pukul\s+(\d{2}:\d{2})/);
     let targetTime = new Date();
-    let jamString = "UNKNOWN";
 
     if (timeMatch) {
-      jamString = timeMatch[1];
-      const [h, m] = jamString.split(":");
+      const [h, m] = timeMatch[1].split(":");
       targetTime.setHours(parseInt(h), parseInt(m), 0, 0);
-      console.log(chalk.greenBright(`📅 Target Lock: ${jamString} WIB`));
+      console.log(chalk.greenBright(`📅 Target Lock: ${timeMatch[1]} WIB`));
     } else {
       console.log(chalk.red("⚠️ Jam manual +1 menit."));
       targetTime.setMinutes(targetTime.getMinutes() + 1);
-      jamString = `${targetTime
-        .getHours()
-        .toString()
-        .padStart(2, "0")}:${targetTime
-        .getMinutes()
-        .toString()
-        .padStart(2, "0")}`;
     }
 
     console.log(chalk.blue("\n⏳ COUNTDOWN..."));
@@ -164,9 +107,6 @@ async function startSniperAPI(account, targetSiteId) {
       if (diffSec > 60 && Date.now() - lastHeartbeat > 30000) {
         try {
           await page.reload({ waitUntil: "domcontentloaded" });
-          if (page.url().includes("login"))
-            await performEmergencyLogin(page, account);
-          csrfToken = await getCsrfToken(page, context);
         } catch (e) {}
         lastHeartbeat = Date.now();
       }
@@ -185,11 +125,16 @@ async function startSniperAPI(account, targetSiteId) {
           });
       }
 
-      // --- GATLING GUN ---
-      if (diffMs <= 200) {
-        console.log(
-          chalk.magenta.bold("\n\n🚀 GATLING GUN: RECORDING EVERYTHING !!!")
-        );
+      // --- FASE PERSIAPAN FINAL (T-2 Detik) ---
+      // Kita refresh halaman di detik -2 agar dropdown muncul
+      if (diffMs <= 2000 && diffMs > 0) {
+        console.log(chalk.yellow("\n🔄 Final Refresh..."));
+        await page.reload({ waitUntil: "domcontentloaded" });
+      }
+
+      // --- THE KILL SHOT (T-0 Detik) ---
+      if (diffMs <= 0) {
+        console.log(chalk.magenta.bold("\n\n🔥 FIRE !!!"));
 
         if (!preSolvedCaptcha)
           preSolvedCaptcha = await solveRecaptchaV2(
@@ -197,70 +142,50 @@ async function startSniperAPI(account, targetSiteId) {
             siteKeys.antrean
           );
 
-        const burstCount = 5;
-        const burstDelay = 100;
-
-        const allPromises = [];
-
-        for (let i = 0; i < burstCount; i++) {
-          console.log(chalk.yellow(`   🔥 BURST #${i + 1} Firing...`));
-
-          const wavePromises = targetWakdaList.map((wakdaId) => {
-            return shootRequestAndReturnData(
-              page,
-              csrfToken,
-              wakdaId,
-              targetSiteId,
-              jamString,
-              tokenUrl,
-              preSolvedCaptcha
-            );
-          });
-
-          allPromises.push(...wavePromises);
-          await delay(burstDelay);
-        }
-
-        // Tunggu semua selesai dan kumpulkan data
-        const rawResults = await Promise.all(allPromises);
-
-        // Filter hasil
-        const hit = rawResults.find((r) => r.success);
-
-        // LOGGING DATA MENTAH
-        // Kita simpan 1 sampel respon sukses atau gagal pertama buat analisis
-        if (rawResults.length > 0) {
-          const sample = hit || rawResults[0];
-          saveDebugData(`API_RESPONSE_${sample.id}`, sample.body, "html");
-        }
-
-        // DUMP HTML HALAMAN AKHIR
-        console.log(chalk.cyan("\n🏁 Saving Final State..."));
-        await page.goto(targetUrl, {
-          waitUntil: "networkidle",
-          timeout: 30000,
-        });
-        const finalHtml = await page.content();
-        const finalFile = saveDebugData("FINAL_PAGE", finalHtml, "html");
-        await page.screenshot({
-          path: `./screenshots/GATLING_RESULT_${Date.now()}.png`,
+        // 1. Pilih Slot (Cepat)
+        const slotFound = await page.evaluate(() => {
+          const s = document.querySelector("select#wakda");
+          if (!s) return null;
+          const opts = Array.from(s.options).filter(
+            (o) => !o.disabled && o.value !== ""
+          );
+          return opts.length > 0 ? opts[0].value : null;
         });
 
-        if (hit) {
-          console.log(
-            chalk.bgGreen.white.bold(
-              ` 🎉 INDIKASI SUKSES! Wakda ${hit.id} Tembus. `
-            )
-          );
-          sendTelegramMsg(
-            `🎉 <b>INDIKASI HIT!</b>\nWakda: ${hit.id}\nCek file: logs/debug_dumps`
-          );
+        if (slotFound) {
+          console.log(chalk.green(`✅ Slot: ${slotFound}`));
+          await page.selectOption("select#wakda", slotFound);
+
+          // 2. Inject Captcha
+          await page.evaluate((t) => {
+            document.getElementById("g-recaptcha-response").innerHTML = t;
+          }, preSolvedCaptcha);
+
+          // 3. KLIK SUBMIT (Native Click)
+          console.log(chalk.magenta("🖱️ CLICKING BUTTON..."));
+          await page.click('button[type="submit"]');
+
+          // Tunggu Hasil
+          try {
+            await page.waitForNavigation({ timeout: 10000 });
+          } catch (e) {}
+
+          // Cek Sukses
+          if (page.url().includes("success") || page.url().includes("tiket")) {
+            console.log(chalk.bgGreen.white(" 🎉 JACKPOT! 🎉 "));
+            sendTelegramMsg(`🎉 <b>JACKPOT!</b> Akun: ${account.email}`);
+            await page.screenshot({
+              path: `./screenshots/WIN_${Date.now()}.png`,
+            });
+          } else {
+            console.log(chalk.red("❌ Gagal."));
+            await page.screenshot({
+              path: `./screenshots/FAIL_${Date.now()}.png`,
+            });
+          }
         } else {
-          console.log(
-            chalk.red("❌ Tidak ada respon positif. Cek logs/debug_dumps.")
-          );
+          console.log(chalk.red("❌ Slot belum muncul/penuh."));
         }
-
         break;
       }
       await delay(50);
@@ -272,73 +197,9 @@ async function startSniperAPI(account, targetSiteId) {
   }
 }
 
-async function shootRequestAndReturnData(
-  page,
-  csrf,
-  wakda,
-  branch,
-  jam,
-  token,
-  captcha
-) {
-  return await page.evaluate(
-    async (data) => {
-      try {
-        const formData = new URLSearchParams();
-        formData.append("csrf_test_name", data.csrf);
-        formData.append("wakda", data.wakda);
-        formData.append("id_cabang", data.branch);
-        formData.append("jam_slot", data.jam);
-        formData.append("waktu", "");
-        formData.append("token", data.token);
-        formData.append("g-recaptcha-response", data.captcha);
-
-        const response = await fetch(
-          "https://antrean.logammulia.com/antrean-ambil",
-          {
-            method: "POST",
-            body: formData,
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          }
-        );
-
-        const text = await response.text();
-        const isSuccess =
-          response.status === 200 &&
-          !text.includes("penuh") &&
-          !text.includes("Gagal") &&
-          !text.includes("Habis") &&
-          !text.includes("Login");
-
-        return {
-          success: isSuccess,
-          id: data.wakda,
-          body: text, // Kembalikan body text ke Node.js
-          status: response.status,
-        };
-      } catch (e) {
-        return {
-          success: false,
-          id: data.wakda,
-          body: "Network Error: " + e.message,
-          status: 0,
-        };
-      }
-    },
-    { csrf, wakda, branch, jam, token, captcha }
-  );
-}
-
-async function getCsrfToken(page, context) {
-  const currentCookies = await context.cookies();
-  const csrfCookie = currentCookies.find(
-    (c) => c.name === "csrf_cookie_name" || c.name === "csrf_test_name"
-  );
-  if (csrfCookie) return csrfCookie.value;
-  return await page.inputValue('input[name="csrf_test_name"]').catch(() => "");
-}
-
+// ... (Helper functions login darurat copy dari sebelumnya) ...
 async function performEmergencyLogin(page, account) {
+  // ... (sama seperti sebelumnya)
   try {
     await page.waitForSelector("#username", { timeout: 5000 });
     await page.fill("#username", account.email);
