@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "clean": "rm -rf session/* screenshots/* && echo 'Bersih-bersih selesai!'",
+    "clean": "rm -rf session/* screenshots/* logs/debug_dumps/* && echo 'Bersih-bersih selesai!'",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -22,6 +22,7 @@
     "cli-table3": "^0.6.5",
     "dotenv": "^16.4.0",
     "inquirer": "^8.2.6",
+    "ntp-client": "^0.5.3",
     "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

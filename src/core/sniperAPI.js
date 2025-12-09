@@ -1,14 +1,26 @@
 const { chromium } = require("playwright");
 const chalk = require("chalk");
 const fs = require("fs");
+const path = require("path");
 const { proxyConfig, getSiteName, siteKeys } = require("../../config/config");
 const { loadSettings } = require("../data/settings");
 const { solveRecaptchaV2 } = require("../utils/solver");
 const { ensureSessionValid } = require("../auth/sessionGuard");
-const { sendTelegramMsg } = require("../utils/telegram"); // Hanya untuk notif text
+const { sendTelegramMsg } = require("../utils/telegram");
+const { getTimeOffset } = require("../utils/ntp");
+const { logWarHistory } = require("../utils/historyLogger"); // <--- IMPORT BARU
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const DB_WAKDA_PATH = "./database/wakda.json";
+
+// Helper: Simpan Log Data Mentah
+function saveDebugData(label, data, ext = "html") {
+  const logDir = "./logs/debug_dumps";
+  if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+  const filename = `${label}_${Date.now()}.${ext}`;
+  fs.writeFileSync(path.join(logDir, filename), data);
+  return filename;
+}
 
 const wakdaMapFallback = {
   6: ["1", "2", "3", "4", "5"],
@@ -29,15 +41,18 @@ const wakdaMapFallback = {
 
 async function startSniperAPI(account, targetSiteId) {
   console.clear();
-  console.log(chalk.bgRed.white.bold(" 🚀 SNIPER API: LOCAL PROOF MODE "));
+  console.log(chalk.bgRed.white.bold(" 🚀 SNIPER API: DATA LOGGER EDITION "));
   console.log(
     chalk.dim(`Target: ${getSiteName(targetSiteId)} | Akun: ${account.email}`)
   );
 
+  const startTime = Date.now(); // Timer mulai
+  const timeOffset = await getTimeOffset();
   await ensureSessionValid(account);
+
   const sessionFile = `./session/${account.email}.json`;
   if (!fs.existsSync(sessionFile))
-    return console.log(chalk.red("❌ Session hilang! Login dulu."));
+    return console.log(chalk.red("❌ Session hilang!"));
 
   const settings = loadSettings();
   const cookies = JSON.parse(fs.readFileSync(sessionFile, "utf-8"));
@@ -51,9 +66,7 @@ async function startSniperAPI(account, targetSiteId) {
         dbData[targetSiteId].length > 0
       ) {
         targetWakdaList = dbData[targetSiteId];
-        console.log(
-          chalk.green(`✅ Menggunakan ID Wakda Terbaru dari Database.`)
-        );
+        console.log(chalk.green(`✅ Menggunakan ID Wakda Database.`));
       }
     }
   } catch (e) {}
@@ -143,22 +156,22 @@ async function startSniperAPI(account, targetSiteId) {
         .padStart(2, "0")}`;
     }
 
-    console.log(chalk.blue("\n⏳ COUNTDOWN TO API LAUNCH..."));
+    console.log(chalk.blue("\n⏳ COUNTDOWN..."));
     let lastHeartbeat = Date.now();
 
     while (true) {
-      const now = new Date();
+      const now = new Date(Date.now() + timeOffset);
       const diffSec = Math.floor((targetTime - now) / 1000);
+      const diffMs = targetTime - now;
 
       if (diffSec > 0) {
         process.stdout.write(
           `\r⏰ T - ${diffSec}s | Captcha: ${
-            preSolvedCaptcha ? "✅" : isSolving ? "⏳ Solving..." : "❌"
-          } `
+            preSolvedCaptcha ? "✅" : isSolving ? "⏳" : "❌"
+          }   `
         );
       }
 
-      // Heartbeat (30 detik)
       if (diffSec > 60 && Date.now() - lastHeartbeat > 30000) {
         try {
           await page.reload({ waitUntil: "domcontentloaded" });
@@ -169,7 +182,6 @@ async function startSniperAPI(account, targetSiteId) {
         lastHeartbeat = Date.now();
       }
 
-      // Pre-Solve Captcha (Anti-Spam)
       if (diffSec <= 100 && diffSec > 0 && !preSolvedCaptcha && !isSolving) {
         isSolving = true;
         console.log(chalk.yellow("\n\n🧩 Pre-Solving Captcha..."));
@@ -179,78 +191,54 @@ async function startSniperAPI(account, targetSiteId) {
             console.log(chalk.green("\n✅ Captcha Ready!"));
           })
           .catch((e) => {
-            console.log(chalk.red("\n❌ Gagal solve, reset kunci."));
             isSolving = false;
           });
       }
 
       // --- FIRE ---
-      if (diffSec <= 0) {
-        console.log(
-          chalk.magenta.bold("\n\n🚀 LAUNCHING API MISSILES (INJECTION)...")
-        );
+      if (diffMs <= 200) {
+        console.log(chalk.magenta.bold("\n\n🚀 GATLING GUN ACTIVATED !!!"));
 
-        if (!preSolvedCaptcha) {
-          console.log("⚠️ Darurat: Solving Captcha on-the-fly...");
+        if (!preSolvedCaptcha)
           preSolvedCaptcha = await solveRecaptchaV2(
             page.url(),
             siteKeys.antrean
           );
+
+        const burstCount = 5;
+        const burstDelay = 100;
+        const allPromises = [];
+
+        // Kita butuh simpan status akhir untuk log
+        let finalStatus = "FAIL";
+        let finalWakda = "";
+        let finalMsg = "Tidak ada hit positif";
+
+        for (let i = 0; i < burstCount; i++) {
+          console.log(chalk.yellow(`   🔥 BURST #${i + 1}...`));
+          const wavePromises = targetWakdaList.map((wakdaId) => {
+            return shootRequestAndRecord(
+              page,
+              csrfToken,
+              wakdaId,
+              targetSiteId,
+              jamString,
+              tokenUrl,
+              preSolvedCaptcha
+            );
+          });
+          allPromises.push(...wavePromises);
+          await delay(burstDelay);
         }
 
-        const requests = [];
+        const results = await Promise.all(allPromises);
+        const hit = results.find((r) => r.success);
 
-        for (const wakdaId of targetWakdaList) {
-          const formattedJam =
-            jamString.length === 5 ? `${jamString}:00` : jamString;
+        // Dump Sample
+        if (results.length > 0)
+          saveDebugData("LAST_RESP", results[0].body, "html");
 
-          const formData = {
-            csrf_test_name: csrfToken,
-            wakda: wakdaId,
-            id_cabang: targetSiteId,
-            jam_slot: formattedJam,
-            waktu: "",
-            token: tokenUrl,
-            "g-recaptcha-response": preSolvedCaptcha,
-          };
-
-          requests.push(
-            context.request
-              .post("https://antrean.logammulia.com/antrean-ambil", {
-                form: formData,
-                headers: { Referer: targetUrl },
-              })
-              .then(async (response) => {
-                const text = await response.text();
-                // Validasi Ketat API Response
-                if (
-                  response.status() === 200 &&
-                  !text.includes("penuh") &&
-                  !text.includes("Gagal") &&
-                  !text.includes("Habis") &&
-                  !text.includes("Login") &&
-                  !text.includes("Pengumuman")
-                ) {
-                  console.log(
-                    chalk.bgGreen.black(
-                      ` ✅ HIT WAKDA ${wakdaId}: INDICATED SUCCESS! `
-                    )
-                  );
-                  return true;
-                }
-                return false;
-              })
-              .catch(() => false)
-          );
-        }
-
-        console.log(
-          chalk.yellow(`🔥 Sending ${requests.length} Concurrent Requests...`)
-        );
-        const results = await Promise.all(requests);
-
-        // --- VALIDASI FINAL VISUAL ---
-        console.log(chalk.cyan("\n🏁 Validasi: Refresh Halaman..."));
+        console.log(chalk.cyan("\n🏁 Validasi Visual..."));
         await page.goto(targetUrl, {
           waitUntil: "networkidle",
           timeout: 30000,
@@ -259,58 +247,111 @@ async function startSniperAPI(account, targetSiteId) {
         const isBarcodeVisible = await page.evaluate(
           () =>
             document.body.innerText.includes("Nomor Antrean") ||
-            document.body.innerText.includes("Barcode") ||
-            document.querySelector(".barcode-container") !== null // Tambahan selector untuk kontainer barcode
+            document.body.innerText.includes("Barcode")
         );
-
-        // 1. Simpan HTML Mentah
-        const finalHTMLContent = await page.content();
-        const htmlFilePath = `./screenshots/HTML_BUKTI_${Date.now()}.html`;
-        fs.writeFileSync(htmlFilePath, finalHTMLContent);
-
-        // 2. Simpan Screenshot
-        const ssPath = `./screenshots/BUKTI_TIKET_${Date.now()}.png`;
-        await page.screenshot({ path: ssPath });
+        await page.screenshot({
+          path: `./screenshots/FINAL_${Date.now()}.png`,
+        });
 
         if (isBarcodeVisible) {
-          console.log(
-            chalk.bgGreen.white.bold(" 🎉 JACKPOT! TIKET MUNCUL DI LAYAR! 🎉 ")
-          );
-          console.log(
-            chalk.yellow(`   Bukti HTML tersimpan di: ${htmlFilePath}`)
-          );
-
-          // Kirim Notif Telegram
-          sendTelegramMsg(
-            `🎉 <b>JACKPOT VALID!</b>\nAkun: ${
-              account.email
-            }\nTiket sudah diamankan.\nCek file ${path.basename(
-              htmlFilePath
-            )} di PC Anda!`
-          );
+          console.log(chalk.bgGreen.white.bold(" 🎉 JACKPOT VALID! 🎉 "));
+          sendTelegramMsg(`🎉 <b>JACKPOT!</b>\nAkun: ${account.email}`);
+          finalStatus = "SUCCESS";
+          finalMsg = "Tiket Barcode Muncul";
+          if (hit) finalWakda = hit.id;
         } else {
-          if (results.includes(true)) {
-            console.log(
-              chalk.red(
-                "❌ FALSE POSITIVE (PHP). API Tembus tapi Tiket Gak Muncul."
-              )
-            );
-          } else {
-            console.log(chalk.red("❌ Gagal. Tidak ada tiket di layar."));
-          }
-          if (page.url().includes("/home"))
-            console.log(chalk.yellow("⚠️ Info: Mental ke Home."));
+          console.log(chalk.red("❌ Gagal."));
+          if (results.includes(true))
+            finalMsg = "PHP (API 200 tapi Visual Gagal)";
+          else finalMsg = "API Gagal / Penuh";
         }
+
+        // --- CATAT KE FILE CSV ---
+        const duration = Date.now() - startTime;
+        logWarHistory({
+          siteName: getSiteName(targetSiteId),
+          email: account.email,
+          wakda: finalWakda || targetWakdaList.join("|"),
+          status: finalStatus,
+          duration: duration,
+          message: finalMsg,
+        });
+        console.log(
+          chalk.gray(`   📝 History perang tercatat di history_log.csv`)
+        );
+        // -------------------------
 
         break;
       }
-      await delay(1000);
+      await delay(50);
     }
   } catch (error) {
     console.error(chalk.red(`CRASH: ${error.message}`));
+    // Catat Error juga
+    logWarHistory({
+      siteName: getSiteName(targetSiteId),
+      email: account.email,
+      wakda: "?",
+      status: "ERROR",
+      duration: 0,
+      message: error.message,
+    });
   } finally {
     console.log("Selesai.");
   }
+}
+
+// ... (Fungsi Helper lain tetap sama: shootRequestAndRecord, getCsrf, performLogin) ...
+// Pastikan fungsi shootRequestAndRecord juga ada di file ini (copy dari sebelumnya)
+
+async function shootRequestAndRecord(
+  page,
+  csrf,
+  wakda,
+  branch,
+  jam,
+  token,
+  captcha
+) {
+  return await page.evaluate(
+    async (data) => {
+      try {
+        const formData = new URLSearchParams();
+        formData.append("csrf_test_name", data.csrf);
+        formData.append("wakda", data.wakda);
+        formData.append("id_cabang", data.branch);
+        formData.append("jam_slot", data.jam);
+        formData.append("waktu", "");
+        formData.append("token", data.token);
+        formData.append("g-recaptcha-response", data.captcha);
+
+        const response = await fetch(
+          "https://antrean.logammulia.com/antrean-ambil",
+          {
+            method: "POST",
+            body: formData,
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          }
+        );
+        const text = await response.text();
+        const isSuccess =
+          response.status === 200 &&
+          !text.includes("penuh") &&
+          !text.includes("Gagal") &&
+          !text.includes("Habis") &&
+          !text.includes("Login");
+        return {
+          success: isSuccess,
+          id: data.wakda,
+          body: text,
+          status: response.status,
+        };
+      } catch (e) {
+        return { success: false, id: data.wakda, body: e.message, status: 0 };
+      }
+    },
+    { csrf, wakda, branch, jam, token, captcha }
+  );
 }
 
 async function getCsrfToken(page, context) {
